@@ -102,12 +102,20 @@ def callback_message(callback):
             bot.answer_callback_query(callback.id, "Подождите, обработка уже идёт...")
             return
 
-        active_users.add(user_id)
         bot.answer_callback_query(callback.id)
         document_classification(callback.message)
 
     if callback.data == "<routing>":
-        pass
+        departments = [[i[1], f"<dprt>{i[0]}"] for i in db.get_departments_id()]
+        bot.send_message(
+            callback.message.chat.id,
+            "Выберите отдел, в который хотите отправить файл",
+            reply_markup=utils.inline_buttons_list("departments", departments, 0, 7)
+        )
+
+    if callback.data == "<send>":
+        bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=None)
+        send_file(callback)
 
     if callback.data == "<cancel>":
         bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=None)
@@ -115,46 +123,32 @@ def callback_message(callback):
         bot.clear_step_handler(callback.message)
         bot.answer_callback_query(callback.id, "Процесс отменён")
 
-    if "<send>" in callback.data:
-        bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=None)
-        try:
-            user_id = callback.from_user.id
+    if "<dprt>" in callback.data:
+        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(text="Отменить", callback_data="<cancel>"))
+        msg = bot.send_message(callback.message.chat.id, "Отправьте файл (.pdf, .docx, .txt) или текст для классификации", reply_markup=markup)
+        department = db.get_department_name_by_id(callback.data.split(">")[1])
+        bot.register_next_step_handler(msg, wait_file, department, True)
 
-            if user_id not in pending_files:
-                bot.answer_callback_query(callback.id, "Файл не найден")
-                return
+    if callback.data.startswith("<page/"):
+        buttons_list = []
+        list_type = ""
 
-            file_data = pending_files[user_id]
-            department = file_data['department']
-            filename = file_data['file_name']
-            extension = file_data['extension']
-            content = file_data['content']
+        if callback.data.startswith("<page/departments>"):
+            buttons_list = [[i[1], f"<dprt>{i[0]}"] for i in db.get_departments_id()]
+            list_type = "departments"
 
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            file_path = str(os.path.join(root_dir, "data", department, f"{filename}{extension}"))
-
-            with open(file_path, "wb") as file:
-                file.write(content)
-
-            db.insert_document(user_id, file_path, department)
-
-            bot.send_message(
-                callback.message.chat.id,
-                f"<b>УСПЕШНО</b>\n\nФайл {filename}{extension} отправлен в отдел {department}.",
-                parse_mode="html"
-            )
-
-        except:
-            bot.send_message(
-                callback.message.chat.id,
-                f"<b>ОШИБКА</b>\n\nФайл не был отправлен.\nПопробуйте еще раз.",
-                parse_mode="html"
-            )
-            utils.log_file(f"TG_ID: {callback.from_user.id} -> Ошибка при отправке файла")
+        new_page = int(callback.data.split(">")[1])
+        bot.edit_message_reply_markup(
+            callback.message.chat.id,
+            callback.message.message_id,
+            reply_markup=utils.inline_buttons_list(list_type, buttons_list, new_page, 7)
+        )
 
 
 def process_document(message):
     try:
+        active_users.add(message.from_user.id)
+
         if message.content_type == 'text':
             bot.send_message(message.chat.id, "Обрабатываю текст")
             text = message.text
@@ -167,30 +161,20 @@ def process_document(message):
 
         elif message.content_type == 'document':
             bot.send_message(message.chat.id, "Обрабатываю документ")
-            file = bot.get_file(message.document.file_id)
+            wait_file(message)
 
-            downloaded_file = bot.download_file(file.file_path)
-            file_name = os.path.splitext(message.document.file_name)[0]
-            extension = os.path.splitext(message.document.file_name)[1]
+            downloaded_file = pending_files[message.from_user.id]["content"]
+            extension = pending_files[message.from_user.id]["extension"]
 
             text = utils.extract_text(downloaded_file, extension)
             classification_result = "{department: Аналитический отдел}"
             department = re.search(r"\{department:\s*(.+?)\}", classification_result)
             department = department.group(1).strip() if department else ""
-            all_departments = db.get_departments()
 
-            pending_files[message.from_user.id] = {
-                "department": department,
-                "file_name": file_name,
-                "extension": extension,
-                "content": downloaded_file
-            }
+            pending_files[message.from_user.id]["department"] = department
 
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton(text="Отправить", callback_data=f"<send>"))
-            if all_departments:
-                for i in all_departments:
-                    markup.add(types.InlineKeyboardButton(text=i, callback_data=f"a123"))
 
             bot.send_message(
                 message.chat.id,
@@ -198,15 +182,82 @@ def process_document(message):
                 reply_markup=markup,
                 parse_mode="html"
             )
-            
+
         else:
-            bot.send_message(message.chat.id, "<b>Произошла ошибка</b>.\nПожалуйста, отправьте текстовое сообщение или файл", parse_mode="html")
+            bot.send_message(
+                message.chat.id,
+                "<b>Произошла ошибка</b>.\nПожалуйста, отправьте текстовое сообщение или файл нужного формата",
+                parse_mode="html"
+            )
     except:
         bot.send_message(message.chat.id, f"<b>Произошла ошибка</b>.\nПопробуйте еще раз.", parse_mode="html")
         utils.log_file(f'TG_ID: {message.from_user.id} -> Ошибка при попытке классификации документа.')
 
     finally:
         active_users.discard(message.from_user.id)
+
+
+def wait_file(message, department: str = None, send: bool = False):
+    file = bot.get_file(message.document.file_id)
+
+    downloaded_file = bot.download_file(file.file_path)
+    file_name = os.path.splitext(message.document.file_name)[0]
+    extension = os.path.splitext(message.document.file_name)[1]
+
+    if extension not in (".pdf", ".docx", ".txt"):
+        bot.send_message(
+            message.chat.id,
+            "<b>Произошла ошибка</b>.\nПожалуйста, отправьте текстовое сообщение или файл нужного формата",
+            parse_mode="html"
+        )
+        return
+
+    pending_files[message.from_user.id] = {
+        "department": department,
+        "file_name": file_name,
+        "extension": extension,
+        "content": downloaded_file
+    }
+
+    if send:
+        send_file(message)
+
+
+def send_file(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id if isinstance(message, types.Message) else message.message.chat.id
+
+    try:
+        if user_id not in pending_files:
+            raise Exception("Пользователь не найден в active_users")
+
+        file_data = pending_files[user_id]
+        department = file_data['department']
+        filename = file_data['file_name']
+        extension = file_data['extension']
+        content = file_data['content']
+
+        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        file_path = utils.unique_file_path(os.path.join(root_dir, "data", department, f"{filename}{extension}"))
+
+        with open(file_path, "wb") as file:
+            file.write(content)
+
+        db.insert_document(user_id, file_path, department)
+
+        bot.send_message(
+            chat_id,
+            f"<b>УСПЕШНО</b>\n\nФайл {filename}{extension} отправлен в отдел {department}.",
+            parse_mode="html"
+        )
+        utils.log_file(f'TG_ID: {user_id} -> Файл успешно отправлен в БД.')
+    except:
+        bot.send_message(
+            chat_id,
+            f"<b>ОШИБКА</b>\n\nФайл не был отправлен.\nПопробуйте еще раз.",
+            parse_mode="html"
+        )
+        utils.log_file(f"TG_ID: {user_id} -> Ошибка при отправке файла")
 
 
 def start_bot():

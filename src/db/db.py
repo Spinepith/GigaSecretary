@@ -1,4 +1,3 @@
-import os
 import time
 
 import psycopg2
@@ -31,9 +30,39 @@ def get_departments():
         return None
 
 
+def get_departments_id():
+    try:
+        cursor.execute("SELECT id, name FROM departments ORDER BY name")
+        departments = [list(row) for row in cursor.fetchall()]
+        return departments
+    except psycopg2.Error as e:
+        utils.log_file(f"Ошибка при работе с бд -> {e}")
+        return None
+
+
+def get_department_id_by_name(department_name: str):
+    try:
+        cursor.execute("SELECT id, name FROM departments WHERE name = %s", (department_name,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except psycopg2.Error as e:
+        utils.log_file(f"Ошибка при получении ID отдела -> {e}")
+        return None
+
+
+def get_department_name_by_id(department_id: str):
+    try:
+        cursor.execute("SELECT id, name FROM departments WHERE id = %s", (department_id,))
+        result = cursor.fetchone()
+        return result[1] if result else None
+    except psycopg2.Error as e:
+        utils.log_file(f"Ошибка при получении ID отдела -> {e}")
+        return None
+
+
 def get_all_documents():
     try:
-        cursor.execute("SELECT id, file_path FROM documents")
+        cursor.execute("SELECT * FROM documents")
         return cursor.fetchall()
     except psycopg2.Error as e:
         utils.log_file(f"Ошибка при получении документов из БД -> {e}")
@@ -45,16 +74,6 @@ def delete_document(document_id: int):
         cursor.execute("DELETE FROM documents WHERE id = %s", (document_id,))
     except psycopg2.Error as e:
         utils.log_file(f"Ошибка при удалении документа из БД -> {e}")
-
-
-# def get_department_id_by_name(department_name: str):
-#     try:
-#         cursor.execute("SELECT id, name FROM departments WHERE name = %s", (department_name,))
-#         result = cursor.fetchone()
-#         return result[0] if result else None
-#     except psycopg2.Error as e:
-#         utils.log_file(f"Ошибка при получении ID отдела -> {e}")
-#         return None
 
 
 def insert_document(id_author: str, file_path: str, department_name: str):
@@ -79,13 +98,18 @@ def monitor_files(delay_seconds: int = 60):
                 time.sleep(delay_seconds)
                 continue
 
-            db_documents = get_all_documents()
-            db_file_paths = {file_path for _, file_path in db_documents}
+            db_documents = get_all_documents() or []
+
+            id_index = 0
+            author_id_index = 1
+            file_path_index = 3
 
             deleted_count = 0
             new_files_count = 0
 
-            for doc_id, file_path in db_documents:
+            for doc in db_documents:
+                doc_id = doc[id_index]
+                file_path = doc[file_path_index]
                 full_path = os.path.join(BASE_DIR, file_path)
 
                 if not os.path.exists(full_path):
@@ -102,15 +126,19 @@ def monitor_files(delay_seconds: int = 60):
                 for file in files:
                     full_path = os.path.join(root, file)
                     relative_path = os.path.relpath(full_path, BASE_DIR)
-                    all_files_found.append((relative_path, file, os.path.basename(root)))
+                    department_name = os.path.basename(root)
+                    all_files_found.append((relative_path, file, department_name))
 
             for relative_path, file, department_name in all_files_found:
-                if relative_path not in db_file_paths:
+                existing_doc = next((doc for doc in db_documents if doc[file_path_index] == relative_path), None)
+
+                if existing_doc:
+                    author_id = existing_doc[author_id_index]
                     departments = get_departments()
 
                     if department_name in departments:
                         utils.log_file(f"Добавлен файл: {file} в отдел '{department_name}'")
-                        insert_document(relative_path, department_name)
+                        insert_document(author_id, relative_path, department_name)
                         new_files_count += 1
                     else:
                         utils.log_file(f"Файл в неизвестном отделе: {file} (папка '{department_name}')")

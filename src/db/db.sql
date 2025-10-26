@@ -18,7 +18,7 @@ CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
     id_author VARCHAR(100),
     department_id INTEGER REFERENCES departments(id) ON DELETE CASCADE,
-    file_path VARCHAR(500) NOT NULL,
+    file_path VARCHAR(500) NOT NULL UNIQUE,
     assigned_employee_id VARCHAR(100) REFERENCES employees(employee_id) ON DELETE SET NULL
 );
 

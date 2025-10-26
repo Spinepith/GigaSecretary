@@ -11,7 +11,7 @@ DB_NAME = __config["db_name"]
 DB_USER = __config["db_user"]
 DB_PASSWORD = __config["db_password"]
 DB_HOST = __config["db_host"]
-DB_PORT = int(__config["db_port"])
+DB_PORT = __config["db_port"]
 
 BOT_TOKEN = __config["bot_token"]
 GIGACHAT_TOKEN = __config["gigachat_token"]

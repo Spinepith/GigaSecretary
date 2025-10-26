@@ -15,17 +15,17 @@ def extract_text(downloaded_file: bytes, extension: str):
     with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
         temp_file.write(downloaded_file)
         temp_file_path = temp_file.name
-        
+
     try:
         text_content = extract_text_from_file(temp_file_path, extension)
         if text_content:
             return text_content
-        else:          
+        else:
             return "Не удалось извлечь текст из файла"
-        
+
     except Exception as e:
         log_file(f"Ошибка при обработке файла -> {e}")
-    
+
     finally:
         if os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
@@ -41,7 +41,7 @@ def extract_text_from_file(file_path: str, extension: str):
             return text_from_txt(file_path)
         case _:
             return None
-        
+
 
 def text_from_pdf(file_path: str):
     try:
@@ -74,8 +74,19 @@ def text_from_txt(file_path: str):
         log_file(f"Ошибка при чтении TXT -> {e}")
 
 
+def unique_file_path(file_path):
+    base, ext = os.path.splitext(file_path)
+    counter = 1
+
+    while os.path.exists(file_path):
+        file_path = f"{base} ({counter}){ext}"
+        counter += 1
+
+    return file_path
+
+
 # КРАСИВЫЙ СПИСОК КНОПОК
-def inline_buttons_list(list_name: str, buttons_list: list[list[str]], current_page: int = 1, max_buttons: int = 5):
+def inline_buttons_list(list_name: str, buttons_list: list[list[str]], current_page: int = 1, max_buttons: int = 1):
     markup = types.InlineKeyboardMarkup()
 
     pages_count = (len(buttons_list) + max_buttons - 1) // max_buttons
