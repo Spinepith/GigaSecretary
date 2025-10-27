@@ -169,7 +169,7 @@ def monitor_files_with_delay(delay_seconds: int = 20):
 
                         new_files_count += 1
                     else:
-                        print(f"⚠ Файл в неизвестном отделе: {file} (папка '{department_name}')")
+                        print(f"Файл в неизвестном отделе: {file} (папка '{department_name}')")
 
             if deleted_count > 0 or new_files_count > 0:
                 print(f"Итог: удалено {deleted_count}, добавлено {new_files_count}")
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     print("ЗАПУСК МОНИТОРИНГА ФАЙЛОВ")
     print(f"Мониторинг папки: {BASE_DIR}")
     print("=" * 50)
-
+    #frf
     try:
         monitor_files_with_delay()
     finally:
