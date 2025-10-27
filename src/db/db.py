@@ -193,7 +193,7 @@ if __name__ == "__main__":
     print("ЗАПУСК МОНИТОРИНГА ФАЙЛОВ")
     print(f"Мониторинг папки: {BASE_DIR}")
     print("=" * 50)
-    #frf
+    #frf44
     try:
         monitor_files_with_delay()
     finally:
