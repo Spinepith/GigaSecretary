@@ -16,11 +16,12 @@ CREATE TABLE employees (
 
 CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
-    id_author VARCHAR(100),
+    id_author VARCHAR(100) REFERENCES employees(employee_id) ON DELETE CASCADE,
     department_id INTEGER REFERENCES departments(id) ON DELETE CASCADE,
-    file_path VARCHAR(500) NOT NULL UNIQUE,
+    file_path VARCHAR(500) NOT NULL,
     assigned_employee_id VARCHAR(100) REFERENCES employees(employee_id) ON DELETE SET NULL
 );
+
 
 CREATE OR REPLACE FUNCTION assign_pending_documents_to_employee(
     free_employee_id VARCHAR(100)
@@ -30,68 +31,97 @@ DECLARE
     pending_doc RECORD;
     employee_dept_id INTEGER;
 BEGIN
-    SELECT department_id INTO employee_dept_id 
-    FROM employees 
+    SELECT department_id INTO employee_dept_id
+    FROM employees
     WHERE employee_id = free_employee_id;
-    
+
     SELECT * INTO pending_doc
-    FROM documents 
-    WHERE 
+    FROM documents
+    WHERE
         assigned_employee_id IS NULL AND
         department_id = employee_dept_id
     ORDER BY id
     LIMIT 1;
-    
+
     IF FOUND THEN
-        UPDATE documents 
+        UPDATE documents
         SET assigned_employee_id = free_employee_id
         WHERE id = pending_doc.id;
-        
-        UPDATE employees 
-        SET is_busy = TRUE 
+
+        UPDATE employees
+        SET is_busy = TRUE
         WHERE employee_id = free_employee_id;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE OR REPLACE FUNCTION assign_all_free_employees()
 RETURNS VOID AS $$
 DECLARE
     free_employee RECORD;
 BEGIN
-    FOR free_employee IN 
-        SELECT employee_id 
-        FROM employees 
+    FOR free_employee IN
+        SELECT employee_id
+        FROM employees
         WHERE is_busy = FALSE
     LOOP
-
         PERFORM assign_pending_documents_to_employee(free_employee.employee_id);
     END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
+
 CREATE OR REPLACE FUNCTION auto_assign_employee()
 RETURNS TRIGGER AS $$
+DECLARE
+    free_employee_id VARCHAR(100);
+    all_busy BOOLEAN;
+    dept_id INTEGER;
 BEGIN
-    SELECT e.employee_id INTO NEW.assigned_employee_id
-    FROM employees e
-    WHERE
-        e.department_id = NEW.department_id AND
-        e.is_busy = FALSE
-    ORDER BY random()
-    LIMIT 1;
+    dept_id := NEW.department_id;
 
-    IF FOUND THEN
+    SELECT COUNT(*) = 0 INTO all_busy
+    FROM employees
+    WHERE department_id = dept_id AND is_busy = FALSE;
+
+    IF NOT all_busy THEN
+
+        SELECT employee_id INTO free_employee_id
+        FROM employees
+        WHERE department_id = dept_id AND is_busy = FALSE
+        ORDER BY random()
+        LIMIT 1;
+
+        NEW.assigned_employee_id := free_employee_id;
+
+
         UPDATE employees
         SET is_busy = TRUE
-        WHERE employee_id = NEW.assigned_employee_id;
+        WHERE employee_id = free_employee_id;
     ELSE
-        NEW.assigned_employee_id := NULL;
+
+        UPDATE employees
+        SET is_busy = FALSE
+        WHERE department_id = dept_id;
+
+        SELECT employee_id INTO free_employee_id
+        FROM employees
+        WHERE department_id = dept_id
+        ORDER BY random()
+        LIMIT 1;
+
+        NEW.assigned_employee_id := free_employee_id;
+
+        UPDATE employees
+        SET is_busy = TRUE
+        WHERE employee_id = free_employee_id;
     END IF;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE OR REPLACE FUNCTION release_employee_on_delete()
 RETURNS TRIGGER AS $$
@@ -100,13 +130,13 @@ BEGIN
         UPDATE employees
         SET is_busy = FALSE
         WHERE employee_id = OLD.assigned_employee_id;
-        
+
         PERFORM assign_pending_documents_to_employee(OLD.assigned_employee_id);
     END IF;
-
     RETURN OLD;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE OR REPLACE FUNCTION on_employee_status_change()
 RETURNS TRIGGER AS $$
@@ -114,10 +144,11 @@ BEGIN
     IF NEW.is_busy = FALSE AND OLD.is_busy = TRUE THEN
         PERFORM assign_pending_documents_to_employee(NEW.employee_id);
     END IF;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE OR REPLACE FUNCTION balance_assignments()
 RETURNS TABLE(
@@ -129,9 +160,9 @@ DECLARE
     assigned_count INTEGER := 0;
 BEGIN
     PERFORM assign_all_free_employees();
-    
+
     RETURN QUERY
-    SELECT 
+    SELECT
         COUNT(CASE WHEN d.assigned_employee_id IS NOT NULL THEN 1 END)::INTEGER as assigned_documents,
         COUNT(CASE WHEN d.assigned_employee_id IS NULL THEN 1 END)::INTEGER as pending_documents,
         COUNT(CASE WHEN e.is_busy = FALSE THEN 1 END)::INTEGER as free_employees
@@ -139,6 +170,7 @@ BEGIN
     CROSS JOIN employees e;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE TRIGGER trigger_auto_assign_employee
     BEFORE INSERT ON documents
