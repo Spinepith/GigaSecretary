@@ -7,11 +7,13 @@ BASE_DIR = os.path.join(ROOT_DIR, "data")
 
 
 def create_dirs():
-    os.makedirs(BASE_DIR, exist_ok=True)
-    departaments = db.get_departments()
-    if departaments:
-        for dept in departaments:
-            os.makedirs(os.path.join(BASE_DIR, dept), exist_ok=True)
+    departments_dir = os.path.join(BASE_DIR, "departments")
+    os.makedirs(departments_dir, exist_ok=True)
+
+    departments = db.get_departments()
+    if departments:
+        for dept in departments:
+            os.makedirs(os.path.join(departments_dir, dept), exist_ok=True)
             print(f"# Структура для отдела '{dept}' готова.")
 
 

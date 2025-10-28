@@ -1,11 +1,14 @@
 import os
 import tempfile
 import traceback
+import shutil
 
 from datetime import datetime
 
 import docx
 import PyPDF2
+import textract
+import win32com.client
 
 from telebot import types
 
@@ -17,7 +20,7 @@ def extract_text(downloaded_file: bytes, extension: str):
         temp_file_path = temp_file.name
 
     try:
-        text_content = extract_text_from_file(temp_file_path, extension)
+        text_content = __extract_text_from_file(temp_file_path, extension)
         if text_content:
             return text_content
         else:
@@ -31,19 +34,21 @@ def extract_text(downloaded_file: bytes, extension: str):
             os.unlink(temp_file_path)
 
 
-def extract_text_from_file(file_path: str, extension: str):
+def __extract_text_from_file(file_path: str, extension: str):
     match extension:
         case ".pdf":
-            return text_from_pdf(file_path)
-        case ".docx" | ".doc":
-            return text_from_docx(file_path)
+            return __text_from_pdf(file_path)
+        case ".docx":
+            return __text_from_docx(file_path)
+        case ".doc":
+            return __text_from_doc(file_path)
         case ".txt":
-            return text_from_txt(file_path)
+            return __text_from_txt(file_path)
         case _:
             return None
 
 
-def text_from_pdf(file_path: str):
+def __text_from_pdf(file_path: str):
     try:
         text = ""
         with open(file_path, 'rb') as file:
@@ -55,7 +60,7 @@ def text_from_pdf(file_path: str):
         log_file(f"Ошибка при чтении PDF -> {e}")
 
 
-def text_from_docx(file_path: str):
+def __text_from_docx(file_path: str):
     try:
         text = ""
         doc = docx.Document(file_path)
@@ -66,7 +71,34 @@ def text_from_docx(file_path: str):
         log_file(f"Ошибка при чтении DOCX -> {e}")
 
 
-def text_from_txt(file_path: str):
+def __text_from_doc(file_path: str):
+    try:
+        if os.name == "nt":
+            if win32com is None:
+                log_file(f"Ошибка при чтении DOC, тк не установлен 'pywin32'")
+
+            import pythoncom
+            pythoncom.CoInitialize()
+
+            word = win32com.client.Dispatch("Word.Application")
+            word.Visible = False
+            doc = word.Documents.Open(file_path)
+            text = doc.Content.Text
+            doc.Close()
+            word.Quit()
+
+            pythoncom.CoUninitialize()
+        else:
+            if shutil.which("antiword") is None:
+                log_file(f"Ошибка при чтении DOC, тк не установлен 'antiword'")
+            text = textract.process(file_path).decode("utf-8")
+
+        return text.strip()
+    except Exception as e:
+        log_file(f"Ошибка при чтении DOC -> {e}")
+
+
+def __text_from_txt(file_path: str):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             return file.read().strip()
@@ -83,6 +115,12 @@ def unique_file_path(file_path):
         counter += 1
 
     return file_path
+
+
+def get_templates():
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    template_dir = os.path.join(root_dir, "data", "templates")
+    return [f for f in os.listdir(template_dir) if os.path.isfile(os.path.join(template_dir, f))]
 
 
 # КРАСИВЫЙ СПИСОК КНОПОК

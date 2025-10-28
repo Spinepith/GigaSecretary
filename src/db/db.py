@@ -88,6 +88,26 @@ def insert_document(id_author: str, file_path: str, department_name: str):
         utils.log_file(f"Ошибка при добавлении документа в БД -> {e}")
 
 
+def get_status(user_id: int):
+    try:
+        cursor.execute("SELECT is_busy FROM employees WHERE employee_id = %s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else False
+    except (TypeError, psycopg2.Error) as e:
+        utils.log_file(f"Ошибка при получении статуса сотрудника в БД -> {e}")
+
+
+def change_status(user_id: int):
+    try:
+        status = get_status(user_id)
+        cursor.execute(
+            "UPDATE employees SET is_busy = %s WHERE employee_id = %s",
+            (not status, user_id)
+        )
+    except (TypeError, psycopg2.Error) as e:
+        utils.log_file(f"Ошибка при изменении статуса сотрудника в БД -> {e}")
+
+
 def monitor_files(delay_seconds: int = 60):
     try:
         while True:

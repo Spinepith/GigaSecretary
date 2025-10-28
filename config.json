@@ -5,5 +5,6 @@
     "db_host": "",
     "db_port": null,
     "bot_token": "",
-    "gigachat_token": ""
+    "gigachat_token": "",
+    "change_status_command": ""
 }

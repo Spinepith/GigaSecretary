@@ -15,3 +15,5 @@ DB_PORT = __config["db_port"]
 
 BOT_TOKEN = __config["bot_token"]
 GIGACHAT_TOKEN = __config["gigachat_token"]
+
+CHANGE_STATUS_COMMAND = __config["change_status_command"]
