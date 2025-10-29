@@ -1,10 +1,10 @@
 import time
 
 import psycopg2
+
 from ..bot import bot
 from ..bot import utils
 from ..config import *
-
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE_DIR = os.path.join(ROOT_DIR, 'data', 'departments')
@@ -76,41 +76,51 @@ def delete_document(document_id: int):
         utils.log_file(f"Ошибка при удалении документа из БД -> {e}")
 
 
-def insert_document(id_author: str, file_path: str, department_name: str):
+def insert_document(file_path: str, department_name: str):
     try:
+        corrected_path = file_path.replace('\\', '/')
+        corrected_path = os.path.normpath(file_path)  # Нормализуем путь
+
+        utils.log_file(f"Исходный путь: {file_path}")
+        utils.log_file(f"Исправленный путь: {corrected_path}")
+        utils.log_file(f"Файл существует: {os.path.exists(corrected_path)}")
+
         cursor.execute("SELECT id, name FROM departments WHERE name = %s", (department_name,))
         department_id = cursor.fetchone()[0]
+
         cursor.execute(
-            "INSERT INTO documents (id_author, file_path, department_id) VALUES (%s, %s, %s)",
-            (id_author, file_path, department_id)
+            "INSERT INTO documents (file_path, department_id) VALUES (%s, %s) RETURNING id, assigned_employee_id",
+            (corrected_path, department_id)
         )
-    except (TypeError, psycopg2.Error) as e:
-        utils.log_file(f"Ошибка при добавлении документа в БД -> {e}")
 
-
-def get_status(user_id: int):
-    try:
-        cursor.execute("SELECT is_busy FROM employees WHERE employee_id = %s", (user_id,))
         result = cursor.fetchone()
-        return result[0] if result else False
-    except (TypeError, psycopg2.Error) as e:
-        utils.log_file(f"Ошибка при получении статуса сотрудника в БД -> {e}")
+        document_id = result[0]
+        assigned_employee_id = result[1]
+
+        abs_path = os.path.join(BASE_DIR, corrected_path)
+
+        document_name = os.path.basename(abs_path)
+
+        with open(abs_path, "rb") as file:
+            bot.bot.send_document(
+                assigned_employee_id,
+                file,
+                visible_file_name=document_name,
+                caption=f"Вам назначен новый документ: {document_name}"
+            )
+
+        utils.log_file(f"Документ успешно отправлен!")
+        return document_id, assigned_employee_id
+
+    except Exception as e:
+        utils.log_file(f"Ошибка при отправке документа -> {e}")
+        return None, None
 
 
-def change_status(user_id: int):
-    try:
-        status = get_status(user_id)
-        cursor.execute(
-            "UPDATE employees SET is_busy = %s WHERE employee_id = %s",
-            (not status, user_id)
-        )
-    except (TypeError, psycopg2.Error) as e:
-        utils.log_file(f"Ошибка при изменении статуса сотрудника в БД -> {e}")
-
-
-def monitor_files(delay_seconds: int = 60):
+def monitor_files(delay_seconds: int = 20):
     try:
         while True:
+            utils.log_file("")
             utils.log_file("ПРОВЕРКА ФАЙЛОВ")
 
             if not os.path.exists(BASE_DIR):
@@ -119,17 +129,15 @@ def monitor_files(delay_seconds: int = 60):
                 continue
 
             db_documents = get_all_documents() or []
-
-            id_index = 0
-            author_id_index = 1
-            file_path_index = 3
+            departments = get_departments() or []
 
             deleted_count = 0
             new_files_count = 0
 
+            # Проверка удаленных файлов
             for doc in db_documents:
-                doc_id = doc[id_index]
-                file_path = doc[file_path_index]
+                doc_id = doc[0]  # ID
+                file_path = doc[3]  # file_path
                 full_path = os.path.join(BASE_DIR, file_path)
 
                 if not os.path.exists(full_path):
@@ -137,30 +145,25 @@ def monitor_files(delay_seconds: int = 60):
                     delete_document(doc_id)
                     deleted_count += 1
 
-            all_files_found = []
-
+            # Поиск новых файлов
             for root, dirs, files in os.walk(BASE_DIR):
-                if root == BASE_DIR and not files:
-                    continue
-
                 for file in files:
                     full_path = os.path.join(root, file)
                     relative_path = os.path.relpath(full_path, BASE_DIR)
                     department_name = os.path.basename(root)
-                    all_files_found.append((relative_path, file, department_name))
 
-            for relative_path, file, department_name in all_files_found:
-                existing_doc = next((doc for doc in db_documents if doc[file_path_index] == relative_path), None)
+                    # Проверяем, есть ли уже такой файл в БД
+                    existing_doc = next((doc for doc in db_documents if doc[3] == relative_path), None)
 
-                if existing_doc:
-                    author_id = existing_doc[author_id_index]
-                    departments = get_departments()
-
-                    if department_name in departments:
+                    if not existing_doc and department_name in departments:
                         utils.log_file(f"Добавлен файл: {file} в отдел '{department_name}'")
-                        insert_document(author_id, relative_path, department_name)
-                        new_files_count += 1
-                    else:
+                        doc_id, assigned_employee = insert_document(relative_path, department_name)
+                        if doc_id:
+                            new_files_count += 1
+
+
+
+                    elif not existing_doc:
                         utils.log_file(f"Файл в неизвестном отделе: {file} (папка '{department_name}')")
 
             if deleted_count > 0 or new_files_count > 0:
@@ -175,56 +178,15 @@ def monitor_files(delay_seconds: int = 60):
 
 
 def monitor_notifications(delay_seconds: int = 60):
-    prev_status = {}
-
+    """Мониторинг для будущих уведомлений (пока заглушка)"""
     try:
+        utils.log_file(f"Монитор уведомлений запущен")
+        # Здесь будет логика отправки уведомлений, когда она понадобится
         while True:
-            try:
-                cursor.execute("SELECT employee_id, is_busy FROM employees")
-                rows = cursor.fetchall() or []
-
-                for employee_id, is_busy in rows:
-                    was = prev_status.get(employee_id)
-
-                    if was is None:
-                        prev_status[employee_id] = is_busy
-                        continue
-
-                    if was is False and is_busy is True:
-                        cursor.execute(
-                            """
-                            SELECT id, file_path 
-                            FROM documents
-                            WHERE assigned_employee_id = %s
-                            ORDER BY id DESC LIMIT 1
-                            """,
-                            (employee_id,)
-                        )
-                        doc = cursor.fetchone()
-
-                        if doc:
-                            doc_id, file_path = doc
-                            abs_path = os.path.join(BASE_DIR, file_path)
-
-                            if os.path.exists(abs_path):
-                                try:
-                                    with open(abs_path, "rb") as file:
-                                        bot.send_document(int(employee_id), file, visible_file_name=os.path.basename(file_path))
-                                    utils.log_file(f"Файл '{file_path}' отправлен сотруднику {employee_id} (doc_id={doc_id})")
-                                except Exception as e:
-                                    utils.log_file(f"Ошибка отправки файла сотруднику {employee_id}: {e}")
-                            else:
-                                utils.log_file(f"Файл не найден для документа {doc_id}: {abs_path}")
-
-                    prev_status[employee_id] = is_busy
-
-            except Exception as loop_err:
-                utils.log_file(f"Ошибка в цикле monitor_notifications: {loop_err}")
-
             time.sleep(delay_seconds)
-
     except Exception as e:
-        utils.log_file(f"Критическая ошибка monitor_notifications: {e}")
+        utils.log_file(f"Ошибка при мониторинге уведомлений -> {e}")
+
 
 def close_connection():
     cursor.close()
