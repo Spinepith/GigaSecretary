@@ -48,7 +48,7 @@ def start_command(message):
 def document_classification(message):
     markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(text="Отменить", callback_data="<cancel>"))
     msg = bot.send_message(message.chat.id, "Отправьте файл (PDF, WORD, TXT) или текст для классификации", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_document)
+    bot.register_next_step_handler(msg, analyze_document)
 
 
 @bot.message_handler(commands=['functions'])
@@ -58,6 +58,7 @@ def functions_list(message):
     markup.add(types.InlineKeyboardButton(text='Маршрутизация документов', callback_data=f'<routing>'))
     markup.add(types.InlineKeyboardButton(text='Шаблоны документов', callback_data=f'<templates>'))
     markup.add(types.InlineKeyboardButton(text='Проверка на соответствие нормативам', callback_data=f'<checkdoc>'))
+    markup.add(types.InlineKeyboardButton(text='Заполнить шаблон', callback_data=f'<filldoc>'))
 
     bot.send_message(
         message.chat.id,
@@ -90,39 +91,22 @@ def change_status_command(message):
 
 @bot.message_handler(content_types=["document"])
 def process_file(message):
-    process_document(message)
+    analyze_document(message)
 
 
 @bot.message_handler(content_types=["text"])
 def not_command(message):
     if message.text.lower() == 'классификация документа':
+        if message.from_user.id in active_users:
+            bot.send_message(message.chat.id, "Подождите, обработка уже идёт...")
+            return
         document_classification(message)
     elif message.text.lower() == 'остальные функции':
         functions_list(message)
     elif message.from_user.id in employees:
-        prev_status = "я свободен" if db.get_status(message.from_user.id) else "я занят"
-        db.change_status(message.from_user.id)
-
-        new_status = db.get_status(message.from_user.id)
-        status_text = "я свободен" if new_status else "я занят"
-
-        for row in keyboard.keyboard:
-            for btn in row:
-                btn_text = getattr(btn, "text", None) or btn.get("text", None)
-                if btn_text in ("я занят", "я свободен"):
-                    if isinstance(btn, dict):
-                        btn["text"] = status_text
-                    else:
-                        btn.text = status_text
-
-                    employees[message.from_user.id] = status_text
-                    bot.send_message(
-                        message.chat.id,
-                        f"Вы изменили статус на: <b><em>{prev_status}</em></b>",
-                        parse_mode="html",
-                        reply_markup=keyboard
-                    )
-                    break
+        user_id = message.from_user.id
+        db.change_status(user_id)
+        update_status_button(user_id, db.get_status(user_id))
     else:
         utils.log_file(f'TG_ID: {message.from_user.id} - Пользователю будет отвечать GigaChat.')
         response = gigasecretary.ask(message.from_user.id, message.text)
@@ -133,9 +117,7 @@ def not_command(message):
 @bot.callback_query_handler(func=lambda callback: True)
 def callback_message(callback):
     if callback.data == "<classdoc>":
-        user_id = callback.from_user.id
-
-        if user_id in active_users:
+        if callback.from_user.id in active_users:
             bot.answer_callback_query(callback.id, "Подождите, обработка уже идёт...")
             return
 
@@ -144,6 +126,7 @@ def callback_message(callback):
 
     if callback.data == "<routing>":
         departments = [[i[1], f"<dprt>{i[0]}"] for i in db.get_departments_id()]
+        bot.answer_callback_query(callback.id)
         bot.send_message(
             callback.message.chat.id,
             "<b><em>Выберите отдел, в который хотите отправить файл</em></b>",
@@ -153,28 +136,46 @@ def callback_message(callback):
 
     if callback.data == "<templates>":
         pending_files[callback.from_user.id] = {
-            "templates": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
+            "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
         }
-
+        bot.answer_callback_query(callback.id)
         bot.send_message(
             callback.message.chat.id,
             "<b><em>ШАБЛОНЫ ДОКУМЕНТОВ</em></b>",
             parse_mode="html",
-            reply_markup=utils.inline_buttons_list("templates-give", pending_files[callback.from_user.id]["templates"], 0, 7)
+            reply_markup=utils.inline_buttons_list("templates-give", pending_files[callback.from_user.id]["templates-give"], 0, 7)
         )
 
     if callback.data == "<checkdoc>":
         pending_files[callback.from_user.id] = {
-            "templates": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
+            "templates-compare": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
         }
+        bot.answer_callback_query(callback.id)
         bot.send_message(
             callback.message.chat.id,
-            "Выберите шаблон для сравнения вашего файла",
-            reply_markup=utils.inline_buttons_list("templates-compare", pending_files[callback.from_user.id]["templates"], 0, 7)
+            "<b><em>Выберите шаблон для сравнения вашего файла</em></b>",
+            parse_mode="html",
+            reply_markup=utils.inline_buttons_list("templates-compare", pending_files[callback.from_user.id]["templates-compare"], 0, 7)
+        )
+
+    if callback.data == "<filldoc>":
+        pending_files[callback.from_user.id] = {
+            "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates()) if j.endswith(".docx")]
+        }
+        bot.answer_callback_query(callback.id)
+        bot.send_message(
+            callback.message.chat.id,
+            "<b>[ТЕСТОВАЯ ФУНКЦИЯ]</b>\n<b><em>Выберите шаблон для заполнения</em></b>",
+            parse_mode="html",
+            reply_markup=utils.inline_buttons_list("templates-fill", pending_files[callback.from_user.id]["templates-fill"], 0, 7)
         )
 
     if callback.data == "<send>":
         bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=None)
+        if callback.from_user.id in active_users:
+            bot.answer_callback_query(callback.id, "Подождите, отправляется предыдущий файл")
+            return
+        bot.answer_callback_query(callback.id)
         save_file(callback)
 
     if callback.data == "<cancel>":
@@ -184,47 +185,81 @@ def callback_message(callback):
         bot.answer_callback_query(callback.id, "Процесс отменён")
 
     if "<dprt>" in callback.data:
+        if callback.from_user.id in active_users:
+            bot.answer_callback_query(callback.id, "Подождите, отправляется другой документ")
+            return
+
+        bot.answer_callback_query(callback.id)
         markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(text="Отменить", callback_data="<cancel>"))
         msg = bot.send_message(callback.message.chat.id, "Отправьте файл (PDF, WORD, TXT) или текст для классификации", reply_markup=markup)
         department = db.get_department_name_by_id(callback.data.split(">")[1])
         bot.register_next_step_handler(msg, wait_file, department, True)
 
     if "<tmplt-give>" in callback.data:
-        document_id = int(callback.data.split(">")[1])
-        if not (callback.from_user.id in pending_files and "templates" in pending_files[callback.from_user.id]):
-            pending_files[callback.from_user.id] = {
-                "templates": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
-            }
-        document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates"]) if i == document_id), None)
+        if callback.from_user.id in active_users:
+            bot.answer_callback_query(callback.id, "Подождите, загружается другой документ")
+            return
 
-        if document_name:
-            file_path = os.path.join(ROOT_DIR, "data", "templates", document_name)
-            if os.path.exists(file_path):
-                with open(file_path, "rb") as file:
-                    extension = os.path.splitext(document_name)[1]
-                    text = utils.extract_text(file.read(), extension)
-                    # caption = gigasecretary.analyze_text(text)
-                    caption = "Абобус Хаги Ваги 1000-7 зебра стакан Ъ"
-                    file.seek(0)
-                    bot.send_document(callback.message.chat.id, file, caption=caption, visible_file_name=document_name)
-                return
+        bot.answer_callback_query(callback.id)
+        active_users.add(callback.from_user.id)
+        bot.send_message(callback.message.chat.id, "Подготовка файла")
 
-        bot.send_message(
-            callback.message.chat.id,
-            "<b>ОШИБКА</b>\n\nНе удалось найти шаблон документа.\nПопробуйте еще раз.",
-            parse_mode="html",
-        )
-        utils.log_file(f'TG_ID: {callback.from_user.id} -> Ошибка при попытке получить шаблон документа.')
+        try:
+            document_id = int(callback.data.split(">")[1])
+            if not (callback.from_user.id in pending_files and "templates-give" in pending_files[callback.from_user.id]):
+                pending_files[callback.from_user.id] = {
+                    "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
+                }
+            document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates-give"]) if
+                                  i == document_id), None)
+
+            if document_name:
+                file_path = os.path.join(ROOT_DIR, "data", "templates", document_name)
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as file:
+                        extension = os.path.splitext(document_name)[1]
+                        text = utils.extract_text(file.read(), extension)
+                        try:
+                            caption = gigasecretary.analyze_document(callback.from_user.id, text)
+                        except:
+                            caption = document_name
+                            utils.log_file("Ошибка подготовки описания файла при отправке шаблона документа")
+                        file.seek(0)
+                        bot.send_document(callback.message.chat.id, file, caption=caption,
+                                          visible_file_name=document_name)
+                    return
+
+            bot.send_message(
+                callback.message.chat.id,
+                "<b>ОШИБКА</b>\n\nНе удалось найти шаблон документа.\nПопробуйте еще раз.",
+                parse_mode="html",
+            )
+            utils.log_file(f'TG_ID: {callback.from_user.id} -> Ошибка при попытке получить шаблон документа.')
+        finally:
+            active_users.discard(callback.from_user.id)
 
     if "<tmplt-compare>" in callback.data:
+        if callback.from_user.id in active_users:
+            bot.answer_callback_query(callback.id, "Подождите, сравнивается другой документ")
+            return
+
+        bot.answer_callback_query(callback.id)
         document_id = int(callback.data.split(">")[1])
-        document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates"]) if i == document_id), None)
+        document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates-compare"]) if i == document_id), None)
         msg = bot.send_message(
             callback.message.chat.id,
             f"<b>{document_name}</b>\n\nОтправьте файл, который хотите сравнить",
             parse_mode="html",
         )
         bot.register_next_step_handler(msg, compare_document, document_name)
+
+    if "<tmplt-fill>" in callback.data:
+        if callback.from_user.id in active_users:
+            bot.answer_callback_query(callback.id, "Подождите, заполняется другой документ")
+            return
+        bot.answer_callback_query(callback.id)
+        msg = bot.send_message(callback.message.chat.id, "Введите данные, которые должны попасть в файл")
+        bot.register_next_step_handler(msg, fill_document, int(callback.data.split(">")[1]))
 
     if callback.data.startswith("<page/"):
         buttons_list = []
@@ -235,20 +270,28 @@ def callback_message(callback):
             list_type = "departments"
 
         if callback.data.startswith("<page/templates-give>"):
-            if not (callback.from_user.id in pending_files and "templates" in pending_files[callback.from_user.id]):
+            if not (callback.from_user.id in pending_files and "templates-give" in pending_files[callback.from_user.id]):
                 pending_files[callback.from_user.id] = {
-                    "templates": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
+                    "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
                 }
-            buttons_list = pending_files[callback.from_user.id]["templates"]
+            buttons_list = pending_files[callback.from_user.id]["templates-give"]
             list_type = "templates-give"
 
         if callback.data.startswith("<page/templates-compare>"):
-            if not (callback.from_user.id in pending_files and "templates" in pending_files[callback.from_user.id]):
+            if not (callback.from_user.id in pending_files and "templates-compare" in pending_files[callback.from_user.id]):
                 pending_files[callback.from_user.id] = {
-                    "templates": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
+                    "templates-compare": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
                 }
-            buttons_list = pending_files[callback.from_user.id]["templates"]
+            buttons_list = pending_files[callback.from_user.id]["templates-compare"]
             list_type = "templates-compare"
+
+        if callback.data.startswith("<page/templates-fill>"):
+            if not (callback.from_user.id in pending_files and "templates-fill" in pending_files[callback.from_user.id]):
+                pending_files[callback.from_user.id] = {
+                    "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates()) if j.endswith(".docx")]
+                }
+            buttons_list = pending_files[callback.from_user.id]["templates-fill"]
+            list_type = "templates-fill"
 
         new_page = int(callback.data.split(">")[1])
         bot.edit_message_reply_markup(
@@ -258,7 +301,7 @@ def callback_message(callback):
         )
 
 
-def process_document(message):
+def analyze_document(message):
     try:
         active_users.add(message.from_user.id)
 
@@ -304,8 +347,7 @@ def process_document(message):
                 "<b>Произошла ошибка</b>.\nПожалуйста, отправьте текстовое сообщение или файл нужного формата",
                 parse_mode="html"
             )
-    except Exception as e:
-        print(e)
+    except:
         bot.send_message(message.chat.id, f"<b>Произошла ошибка</b>.\nПопробуйте еще раз.", parse_mode="html")
         utils.log_file(f'TG_ID: {message.from_user.id} -> Ошибка при попытке классификации документа.')
 
@@ -353,10 +395,44 @@ def compare_document(message, to_compare: str):
                 "<b>Произошла ошибка</b>.\nПожалуйста, отправьте файл нужного формата",
                 parse_mode="html"
             )
-    except Exception as e:
+    except:
         bot.send_message(message.chat.id, f"<b>Произошла ошибка</b>.\nПопробуйте еще раз.", parse_mode="html")
         utils.log_file(f'TG_ID: {message.from_user.id} -> Ошибка при сравнении пользовательского документа с шаблоном.')
+    finally:
+        active_users.discard(message.from_user.id)
 
+
+def fill_document(message, document_id: str):
+    try:
+        bot.send_message(message.chat.id, "Подготовка файла")
+
+        if not (message.from_user.id in pending_files and "templates-fill" in pending_files[message.from_user.id]):
+            pending_files[message.from_user.id] = {
+                "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates())]
+            }
+        document_name = next(
+            (j[0] for i, j in enumerate(pending_files[message.from_user.id]["templates-fill"]) if i == document_id),
+            None
+        )
+
+        if document_name:
+            file_path = os.path.join(ROOT_DIR, "data", "templates", document_name)
+            if os.path.exists(file_path):
+                file = gigasecretary.fill_document(message.from_user.id, message.text, str(file_path))
+                caption = "<b><em>Документ успешно заполнен</em></b>"
+                bot.send_document(message.chat.id, file, caption=caption, visible_file_name=document_name, parse_mode="html")
+                return
+
+        bot.send_message(
+            message.chat.id,
+            "<b>ОШИБКА</b>\n\nНе удалось найти шаблон документа.\nПопробуйте еще раз.",
+            parse_mode="html",
+        )
+        utils.log_file(f'TG_ID: {message.from_user.id} -> Ошибка при попытке получить шаблон документа.')
+    except Exception as e:
+        print(e)
+        bot.send_message(message.chat.id, f"<b>Произошла ошибка</b>.\nПопробуйте еще раз.", parse_mode="html")
+        utils.log_file(f'TG_ID: {message.from_user.id} -> Ошибка при заполнении шаблона документа.')
     finally:
         active_users.discard(message.from_user.id)
 
@@ -384,12 +460,16 @@ def wait_file(message, department: str = None, save: bool = False):
     }
 
     if save:
+        if message.from_user.id in active_users:
+            bot.send_message(message.chat.id, "Подождите, отправляется предыдущий файл")
+            return
         save_file(message)
 
 
 def save_file(message):
     user_id = message.from_user.id
     chat_id = message.chat.id if isinstance(message, types.Message) else message.message.chat.id
+    active_users.add(user_id)
 
     try:
         if user_id not in pending_files:
@@ -426,17 +506,37 @@ def save_file(message):
             parse_mode="html"
         )
         utils.log_file(f"TG_ID: {user_id} -> Ошибка при отправке файла")
+    finally:
+        active_users.discard(message.from_user.id)
 
 
-def signal_handler(sig, name):
-    sys.exit(0)
+def update_status_button(user_id: int, status: bool):
+    status_text = "я свободен" if status else "я занят"
+    prev_status = "я свободен" if not status else "я занят"
+
+    for row in keyboard.keyboard:
+        for btn in row:
+            btn_text = getattr(btn, "text", None) or btn.get("text", None)
+            if btn_text in ("я занят", "я свободен"):
+                if isinstance(btn, dict):
+                    btn["text"] = status_text
+                else:
+                    btn.text = status_text
+
+                employees[user_id] = status_text
+                bot.send_message(
+                    user_id,
+                    f"Вы изменили статус на: <b><em>{prev_status}</em></b>",
+                    parse_mode="html",
+                    reply_markup=keyboard
+                )
+                break
 
 
 def start_bot():
     threading.Thread(target=db.monitor_files, daemon=True).start()
-    threading.Thread(target=db.monitor_notifications, daemon=True).start()
     atexit.register(lambda: db.close_connection())
-    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGINT, lambda sig, name: sys.exit(0))
 
     while True:
         try:
@@ -447,7 +547,12 @@ def start_bot():
 
             utils.log_file("БОТ ЗАВЕРШИЛ РАБОТУ")
             print("# БОТ ЗАВЕРШИЛ РАБОТУ\n")
+        except SystemExit:
+            utils.log_file(f"ПОЛЬЗОВАТЕЛЬ ЗАВЕРШИЛ РАБОТУ БОТА")
+            print(f"# ПОЛЬЗОВАТЕЛЬ ЗАВЕРШИЛ РАБОТУ БОТА")
+            break
         except Exception as e:
+            utils.log_file("# КРИТИЧЕСКАЯ ОШИБКА. БОТ ЗАВЕРШИЛ РАБОТУ. БОТ БУДЕТ ПЕРЕЗАПУЩЕН ЧЕРЕЗ 5 СЕКУНД")
             utils.log_file(e)
             print(f"# КРИТИЧЕСКАЯ ОШИБКА. БОТ ЗАВЕРШИЛ РАБОТУ\n{e}\n\nБОТ БУДЕТ ПЕРЕЗАПУЩЕН ЧЕРЕЗ 5 СЕКУНД")
             time.sleep(5)

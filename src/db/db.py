@@ -76,21 +76,19 @@ def delete_document(document_id: int):
         utils.log_file(f"Ошибка при удалении документа из БД -> {e}")
 
 
-def insert_document(file_path: str, department_name: str):
+def insert_document(id_author: int, file_path: str, department_name: str):
     try:
-        corrected_path = file_path.replace('\\', '/')
-        corrected_path = os.path.normpath(file_path)  # Нормализуем путь
+        corrected_path = os.path.normpath(file_path)
 
-        utils.log_file(f"Исходный путь: {file_path}")
-        utils.log_file(f"Исправленный путь: {corrected_path}")
-        utils.log_file(f"Файл существует: {os.path.exists(corrected_path)}")
+        exists = "СУЩЕСТВУЕТ" if os.path.exists(corrected_path) else "НЕ СУЩЕСТВУЕТ"
+        utils.log_file(f"Файл {exists}: {corrected_path}")
 
         cursor.execute("SELECT id, name FROM departments WHERE name = %s", (department_name,))
         department_id = cursor.fetchone()[0]
 
         cursor.execute(
-            "INSERT INTO documents (file_path, department_id) VALUES (%s, %s) RETURNING id, assigned_employee_id",
-            (corrected_path, department_id)
+            "INSERT INTO documents (id_author, file_path, department_id) VALUES (%s, %s, %s) RETURNING id, assigned_employee_id",
+            (id_author, corrected_path, department_id)
         )
 
         result = cursor.fetchone()
@@ -108,6 +106,7 @@ def insert_document(file_path: str, department_name: str):
                 visible_file_name=document_name,
                 caption=f"Вам назначен новый документ: {document_name}"
             )
+        bot.update_status_button(assigned_employee_id, get_status(assigned_employee_id))
 
         utils.log_file(f"Документ успешно отправлен!")
         return document_id, assigned_employee_id
@@ -117,10 +116,29 @@ def insert_document(file_path: str, department_name: str):
         return None, None
 
 
+def get_status(user_id: int):
+    try:
+        cursor.execute("SELECT is_busy FROM employees WHERE employee_id = %s", (str(user_id),))
+        result = cursor.fetchone()
+        return result[0] if result else False
+    except (TypeError, psycopg2.Error) as e:
+        utils.log_file(f"Ошибка при получении статуса сотрудника в БД -> {e}")
+
+
+def change_status(user_id: int):
+    try:
+        status = get_status(user_id)
+        cursor.execute(
+            "UPDATE employees SET is_busy = %s WHERE employee_id = %s",
+            (not status, str(user_id))
+        )
+    except (TypeError, psycopg2.Error) as e:
+        utils.log_file(f"Ошибка при изменении статуса сотрудника в БД -> {e}")
+
+
 def monitor_files(delay_seconds: int = 20):
     try:
         while True:
-            utils.log_file("")
             utils.log_file("ПРОВЕРКА ФАЙЛОВ")
 
             if not os.path.exists(BASE_DIR):
@@ -149,20 +167,18 @@ def monitor_files(delay_seconds: int = 20):
             for root, dirs, files in os.walk(BASE_DIR):
                 for file in files:
                     full_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(full_path, BASE_DIR)
+                    corrected_path = os.path.normpath(full_path)
                     department_name = os.path.basename(root)
 
                     # Проверяем, есть ли уже такой файл в БД
-                    existing_doc = next((doc for doc in db_documents if doc[3] == relative_path), None)
+                    existing_doc = next((doc for doc in db_documents if doc[3] == corrected_path), None)
+                    author_id = existing_doc[1] if existing_doc else -1
 
                     if not existing_doc and department_name in departments:
                         utils.log_file(f"Добавлен файл: {file} в отдел '{department_name}'")
-                        doc_id, assigned_employee = insert_document(relative_path, department_name)
+                        doc_id, assigned_employee = insert_document(author_id, corrected_path, department_name)
                         if doc_id:
                             new_files_count += 1
-
-
-
                     elif not existing_doc:
                         utils.log_file(f"Файл в неизвестном отделе: {file} (папка '{department_name}')")
 
@@ -175,17 +191,6 @@ def monitor_files(delay_seconds: int = 20):
 
     except Exception as e:
         utils.log_file(f"Ошибка при мониторинге файлов -> {e}")
-
-
-def monitor_notifications(delay_seconds: int = 60):
-    """Мониторинг для будущих уведомлений (пока заглушка)"""
-    try:
-        utils.log_file(f"Монитор уведомлений запущен")
-        # Здесь будет логика отправки уведомлений, когда она понадобится
-        while True:
-            time.sleep(delay_seconds)
-    except Exception as e:
-        utils.log_file(f"Ошибка при мониторинге уведомлений -> {e}")
 
 
 def close_connection():

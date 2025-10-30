@@ -1,8 +1,9 @@
 .venv/
 .idea/
 logs/
-data/
 __pyache__/
+
+data/departments/
 
 .DS_Store
 *.pyc

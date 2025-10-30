@@ -11,15 +11,19 @@ CREATE TABLE employees (
     id SERIAL PRIMARY KEY,
     employee_id VARCHAR(100) NOT NULL UNIQUE,
     department_id INTEGER REFERENCES departments(id) ON DELETE CASCADE,
-    is_busy BOOLEAN NOT NULL DEFAULT FALSE
+    is_busy BOOLEAN NOT NULL DEFAULT FALSE,
+    full_name VARCHAR(200),
+    department_name VARCHAR(100)
 );
 
 CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
-    id_author VARCHAR(100) REFERENCES employees(employee_id) ON DELETE CASCADE,
+    id_author VARCHAR(100),
     department_id INTEGER REFERENCES departments(id) ON DELETE CASCADE,
-    file_path VARCHAR(500) NOT NULL,
-    assigned_employee_id VARCHAR(100) REFERENCES employees(employee_id) ON DELETE SET NULL
+    file_path VARCHAR(500) NOT NULL UNIQUE,
+    assigned_employee_id VARCHAR(100) REFERENCES employees(employee_id) ON DELETE SET NULL,
+    assigned_employee_full_name VARCHAR(200),
+    department_name VARCHAR(100)
 );
 
 
@@ -45,7 +49,9 @@ BEGIN
 
     IF FOUND THEN
         UPDATE documents
-        SET assigned_employee_id = free_employee_id
+        SET assigned_employee_id = free_employee_id,
+            assigned_employee_full_name = (SELECT full_name FROM employees WHERE employee_id = free_employee_id),
+            department_name = (SELECT department_name FROM employees WHERE employee_id = free_employee_id)
         WHERE id = pending_doc.id;
 
         UPDATE employees
@@ -95,15 +101,15 @@ BEGIN
 
         NEW.assigned_employee_id := free_employee_id;
 
+        SELECT full_name, department_name
+        INTO NEW.assigned_employee_full_name, NEW.department_name
+        FROM employees
+        WHERE employee_id = free_employee_id;
 
         UPDATE employees
         SET is_busy = TRUE
         WHERE employee_id = free_employee_id;
     ELSE
-
-        UPDATE employees
-        SET is_busy = FALSE
-        WHERE department_id = dept_id;
 
         SELECT employee_id INTO free_employee_id
         FROM employees
@@ -111,10 +117,19 @@ BEGIN
         ORDER BY random()
         LIMIT 1;
 
-        NEW.assigned_employee_id := free_employee_id;
+        UPDATE employees
+        SET is_busy = FALSE
+        WHERE department_id = dept_id;
 
         UPDATE employees
         SET is_busy = TRUE
+        WHERE employee_id = free_employee_id;
+
+        NEW.assigned_employee_id := free_employee_id;
+
+        SELECT full_name, department_name
+        INTO NEW.assigned_employee_full_name, NEW.department_name
+        FROM employees
         WHERE employee_id = free_employee_id;
     END IF;
 
