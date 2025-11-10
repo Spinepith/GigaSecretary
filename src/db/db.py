@@ -136,6 +136,16 @@ def change_status(user_id: int):
         utils.log_file(f"Ошибка при изменении статуса сотрудника в БД -> {e}")
 
 
+def is_employee(tg_id: str):
+    try:
+        cursor.execute("SELECT 1 FROM employees WHERE employee_id = %s LIMIT 1;", (tg_id,))
+        result = cursor.fetchone()
+        return result is not None
+    except Exception as e:
+        utils.log_file(f"Ошибка при проверке сотрудника: {e}")
+        return False
+
+
 def monitor_files(delay_seconds: int = 20):
     try:
         while True:

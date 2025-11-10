@@ -80,6 +80,10 @@ def help_command(message):
 
 @bot.message_handler(commands=[CHANGE_STATUS_COMMAND])
 def change_status_command(message):
+    if not db.is_employee(str(message.from_user.id)):
+        bot.send_message(message.chat.id, "Вы не найдены в базе данных сотрудников")
+        return
+
     if message.from_user.id not in employees:
         is_free = db.get_status(message.from_user.id)
         status = "я свободен" if is_free else "я занят"
@@ -206,12 +210,10 @@ def callback_message(callback):
 
         try:
             document_id = int(callback.data.split(">")[1])
-            if not (callback.from_user.id in pending_files and "templates-give" in pending_files[callback.from_user.id]):
-                pending_files[callback.from_user.id] = {
-                    "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
-                }
-            document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates-give"]) if
-                                  i == document_id), None)
+            pending_files[callback.from_user.id] = {
+                "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
+            }
+            document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates-give"]) if i == document_id), None)
 
             if document_name:
                 file_path = os.path.join(ROOT_DIR, "data", "templates", document_name)
@@ -225,8 +227,7 @@ def callback_message(callback):
                             caption = document_name
                             utils.log_file("Ошибка подготовки описания файла при отправке шаблона документа")
                         file.seek(0)
-                        bot.send_document(callback.message.chat.id, file, caption=caption,
-                                          visible_file_name=document_name)
+                        bot.send_document(callback.message.chat.id, file, caption=caption, visible_file_name=document_name)
                     return
 
             bot.send_message(
@@ -245,6 +246,10 @@ def callback_message(callback):
 
         bot.answer_callback_query(callback.id)
         document_id = int(callback.data.split(">")[1])
+        pending_files[callback.from_user.id] = {
+            "templates-compare": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
+        }
+
         document_name = next((j[0] for i, j in enumerate(pending_files[callback.from_user.id]["templates-compare"]) if i == document_id), None)
         msg = bot.send_message(
             callback.message.chat.id,
@@ -270,26 +275,23 @@ def callback_message(callback):
             list_type = "departments"
 
         if callback.data.startswith("<page/templates-give>"):
-            if not (callback.from_user.id in pending_files and "templates-give" in pending_files[callback.from_user.id]):
-                pending_files[callback.from_user.id] = {
-                    "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
-                }
+            pending_files[callback.from_user.id] = {
+                "templates-give": [[j, f"<tmplt-give>{i}"] for i, j in enumerate(utils.get_templates())]
+            }
             buttons_list = pending_files[callback.from_user.id]["templates-give"]
             list_type = "templates-give"
 
         if callback.data.startswith("<page/templates-compare>"):
-            if not (callback.from_user.id in pending_files and "templates-compare" in pending_files[callback.from_user.id]):
-                pending_files[callback.from_user.id] = {
-                    "templates-compare": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
-                }
+            pending_files[callback.from_user.id] = {
+                "templates-compare": [[j, f"<tmplt-compare>{i}"] for i, j in enumerate(utils.get_templates())]
+            }
             buttons_list = pending_files[callback.from_user.id]["templates-compare"]
             list_type = "templates-compare"
 
         if callback.data.startswith("<page/templates-fill>"):
-            if not (callback.from_user.id in pending_files and "templates-fill" in pending_files[callback.from_user.id]):
-                pending_files[callback.from_user.id] = {
-                    "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates()) if j.endswith(".docx")]
-                }
+            pending_files[callback.from_user.id] = {
+                "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates()) if j.endswith(".docx")]
+            }
             buttons_list = pending_files[callback.from_user.id]["templates-fill"]
             list_type = "templates-fill"
 
@@ -406,10 +408,9 @@ def fill_document(message, document_id: str):
     try:
         bot.send_message(message.chat.id, "Подготовка файла")
 
-        if not (message.from_user.id in pending_files and "templates-fill" in pending_files[message.from_user.id]):
-            pending_files[message.from_user.id] = {
-                "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates())]
-            }
+        pending_files[message.from_user.id] = {
+            "templates-fill": [[j, f"<tmplt-fill>{i}"] for i, j in enumerate(utils.get_templates())]
+        }
         document_name = next(
             (j[0] for i, j in enumerate(pending_files[message.from_user.id]["templates-fill"]) if i == document_id),
             None
